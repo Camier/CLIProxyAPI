@@ -8,10 +8,16 @@ import (
 	"net"
 	"net/http"
 	"net/url"
+	"time"
 
 	"github.com/router-for-me/CLIProxyAPI/v6/sdk/config"
 	log "github.com/sirupsen/logrus"
 	"golang.org/x/net/proxy"
+)
+
+const (
+	proxyTransportMaxIdleConns        = 256
+	proxyTransportMaxIdleConnsPerHost = 128
 )
 
 // SetProxy configures the provided HTTP client with proxy settings from the configuration.
@@ -41,10 +47,24 @@ func SetProxy(cfg *config.SDKConfig, httpClient *http.Client) *http.Client {
 				DialContext: func(ctx context.Context, network, addr string) (net.Conn, error) {
 					return dialer.Dial(network, addr)
 				},
+				MaxIdleConns:          proxyTransportMaxIdleConns,
+				MaxIdleConnsPerHost:   proxyTransportMaxIdleConnsPerHost,
+				IdleConnTimeout:       90 * time.Second,
+				TLSHandshakeTimeout:   10 * time.Second,
+				ExpectContinueTimeout: 1 * time.Second,
+				ForceAttemptHTTP2:     true,
 			}
 		} else if proxyURL.Scheme == "http" || proxyURL.Scheme == "https" {
 			// Configure HTTP or HTTPS proxy.
-			transport = &http.Transport{Proxy: http.ProxyURL(proxyURL)}
+			transport = &http.Transport{
+				Proxy:                 http.ProxyURL(proxyURL),
+				MaxIdleConns:          proxyTransportMaxIdleConns,
+				MaxIdleConnsPerHost:   proxyTransportMaxIdleConnsPerHost,
+				IdleConnTimeout:       90 * time.Second,
+				TLSHandshakeTimeout:   10 * time.Second,
+				ExpectContinueTimeout: 1 * time.Second,
+				ForceAttemptHTTP2:     true,
+			}
 		}
 	}
 	// If a new transport was created, apply it to the HTTP client.

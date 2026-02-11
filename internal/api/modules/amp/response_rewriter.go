@@ -20,6 +20,31 @@ type ResponseRewriter struct {
 	isStreaming   bool
 }
 
+var (
+	jsonModelFieldNeedle   = []byte(`"model`)
+	jsonContentFieldNeedle = []byte(`"content"`)
+)
+
+func shouldBufferForJSONRewrite(contentType string) bool {
+	ct := strings.ToLower(strings.TrimSpace(contentType))
+	if ct == "" {
+		return true
+	}
+
+	return strings.Contains(ct, "json") || strings.Contains(ct, "javascript")
+}
+
+func mayNeedRewrite(data []byte, originalModel string) bool {
+	if bytes.Contains(data, jsonContentFieldNeedle) {
+		return true
+	}
+	if originalModel == "" {
+		return false
+	}
+
+	return bytes.Contains(data, jsonModelFieldNeedle)
+}
+
 // NewResponseRewriter creates a new response rewriter for model name substitution
 func NewResponseRewriter(w gin.ResponseWriter, originalModel string) *ResponseRewriter {
 	return &ResponseRewriter{
@@ -47,6 +72,11 @@ func (rw *ResponseRewriter) Write(data []byte) (int, error) {
 		}
 		return n, err
 	}
+
+	if !shouldBufferForJSONRewrite(rw.Header().Get("Content-Type")) {
+		return rw.ResponseWriter.Write(data)
+	}
+
 	return rw.body.Write(data)
 }
 
@@ -59,7 +89,11 @@ func (rw *ResponseRewriter) Flush() {
 		return
 	}
 	if rw.body.Len() > 0 {
-		if _, err := rw.ResponseWriter.Write(rw.rewriteModelInResponse(rw.body.Bytes())); err != nil {
+		payload := rw.body.Bytes()
+		if mayNeedRewrite(payload, rw.originalModel) {
+			payload = rw.rewriteModelInResponse(payload)
+		}
+		if _, err := rw.ResponseWriter.Write(payload); err != nil {
 			log.Warnf("amp response rewriter: failed to write rewritten response: %v", err)
 		}
 	}
@@ -71,9 +105,13 @@ var modelFieldPaths = []string{"message.model", "model", "modelVersion", "respon
 // rewriteModelInResponse replaces all occurrences of the mapped model with the original model in JSON
 // It also suppresses "thinking" blocks if "tool_use" is present to ensure Amp client compatibility
 func (rw *ResponseRewriter) rewriteModelInResponse(data []byte) []byte {
+	if !mayNeedRewrite(data, rw.originalModel) {
+		return data
+	}
+
 	// 1. Amp Compatibility: Suppress thinking blocks if tool use is detected
 	// The Amp client struggles when both thinking and tool_use blocks are present
-	if gjson.GetBytes(data, `content.#(type=="tool_use")`).Exists() {
+	if bytes.Contains(data, jsonContentFieldNeedle) && gjson.GetBytes(data, `content.#(type=="tool_use")`).Exists() {
 		filtered := gjson.GetBytes(data, `content.#(type!="thinking")#`)
 		if filtered.Exists() {
 			originalCount := gjson.GetBytes(data, "content.#").Int()
@@ -85,15 +123,16 @@ func (rw *ResponseRewriter) rewriteModelInResponse(data []byte) []byte {
 				if err != nil {
 					log.Warnf("Amp ResponseRewriter: failed to suppress thinking blocks: %v", err)
 				} else {
-					log.Debugf("Amp ResponseRewriter: Suppressed %d thinking blocks due to tool usage", originalCount-filteredCount)
-					// Log the result for verification
-					log.Debugf("Amp ResponseRewriter: Resulting content: %s", gjson.GetBytes(data, "content").String())
+					if log.IsLevelEnabled(log.DebugLevel) {
+						log.Debugf("Amp ResponseRewriter: Suppressed %d thinking blocks due to tool usage", originalCount-filteredCount)
+						log.Debugf("Amp ResponseRewriter: Resulting content: %s", gjson.GetBytes(data, "content").String())
+					}
 				}
 			}
 		}
 	}
 
-	if rw.originalModel == "" {
+	if rw.originalModel == "" || !bytes.Contains(data, jsonModelFieldNeedle) {
 		return data
 	}
 	for _, path := range modelFieldPaths {
@@ -116,6 +155,9 @@ func (rw *ResponseRewriter) rewriteStreamChunk(chunk []byte) []byte {
 		if bytes.HasPrefix(line, []byte("data: ")) {
 			jsonData := bytes.TrimPrefix(line, []byte("data: "))
 			if len(jsonData) > 0 && jsonData[0] == '{' {
+				if !mayNeedRewrite(jsonData, rw.originalModel) {
+					continue
+				}
 				// Rewrite JSON in the data line
 				rewritten := rw.rewriteModelInResponse(jsonData)
 				lines[i] = append([]byte("data: "), rewritten...)

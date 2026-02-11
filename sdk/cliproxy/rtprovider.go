@@ -7,10 +7,16 @@ import (
 	"net/url"
 	"strings"
 	"sync"
+	"time"
 
 	coreauth "github.com/router-for-me/CLIProxyAPI/v6/sdk/cliproxy/auth"
 	log "github.com/sirupsen/logrus"
 	"golang.org/x/net/proxy"
+)
+
+const (
+	rtProviderMaxIdleConns        = 256
+	rtProviderMaxIdleConnsPerHost = 128
 )
 
 // defaultRoundTripperProvider returns a per-auth HTTP RoundTripper based on
@@ -62,10 +68,24 @@ func (p *defaultRoundTripperProvider) RoundTripperFor(auth *coreauth.Auth) http.
 			DialContext: func(ctx context.Context, network, addr string) (net.Conn, error) {
 				return dialer.Dial(network, addr)
 			},
+			MaxIdleConns:          rtProviderMaxIdleConns,
+			MaxIdleConnsPerHost:   rtProviderMaxIdleConnsPerHost,
+			IdleConnTimeout:       90 * time.Second,
+			TLSHandshakeTimeout:   10 * time.Second,
+			ExpectContinueTimeout: 1 * time.Second,
+			ForceAttemptHTTP2:     true,
 		}
 	} else if proxyURL.Scheme == "http" || proxyURL.Scheme == "https" {
 		// Configure HTTP or HTTPS proxy.
-		transport = &http.Transport{Proxy: http.ProxyURL(proxyURL)}
+		transport = &http.Transport{
+			Proxy:                 http.ProxyURL(proxyURL),
+			MaxIdleConns:          rtProviderMaxIdleConns,
+			MaxIdleConnsPerHost:   rtProviderMaxIdleConnsPerHost,
+			IdleConnTimeout:       90 * time.Second,
+			TLSHandshakeTimeout:   10 * time.Second,
+			ExpectContinueTimeout: 1 * time.Second,
+			ForceAttemptHTTP2:     true,
+		}
 	} else {
 		log.Errorf("unsupported proxy scheme: %s", proxyURL.Scheme)
 		return nil
