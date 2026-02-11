@@ -1,0 +1,25 @@
+name: pr-no-test-double-policy
+
+on:
+  pull_request:
+    types:
+      - opened
+      - synchronize
+      - reopened
+
+permissions:
+  contents: read
+
+jobs:
+  enforce-strict-policy:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Enforce no test-double policy
+        run: |
+          chmod +x scripts/no_test_double_policy.sh
+          scripts/no_test_double_policy.sh "origin/${{ github.base_ref }}"
