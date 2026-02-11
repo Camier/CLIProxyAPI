@@ -42,6 +42,11 @@ var Scopes = []string{
 	"https://www.googleapis.com/auth/userinfo.profile",
 }
 
+const (
+	geminiAuthMaxIdleConns        = 256
+	geminiAuthMaxIdleConnsPerHost = 128
+)
+
 // GeminiAuth provides methods for handling the Gemini OAuth2 authentication flow.
 // It encapsulates the logic for obtaining, storing, and refreshing authentication tokens
 // for Google's Gemini AI services.
@@ -98,10 +103,24 @@ func (g *GeminiAuth) GetAuthenticatedClient(ctx context.Context, ts *GeminiToken
 				DialContext: func(ctx context.Context, network, addr string) (net.Conn, error) {
 					return dialer.Dial(network, addr)
 				},
+				MaxIdleConns:          geminiAuthMaxIdleConns,
+				MaxIdleConnsPerHost:   geminiAuthMaxIdleConnsPerHost,
+				IdleConnTimeout:       90 * time.Second,
+				TLSHandshakeTimeout:   10 * time.Second,
+				ExpectContinueTimeout: 1 * time.Second,
+				ForceAttemptHTTP2:     true,
 			}
 		} else if proxyURL.Scheme == "http" || proxyURL.Scheme == "https" {
 			// Handle HTTP/HTTPS proxy.
-			transport = &http.Transport{Proxy: http.ProxyURL(proxyURL)}
+			transport = &http.Transport{
+				Proxy:                 http.ProxyURL(proxyURL),
+				MaxIdleConns:          geminiAuthMaxIdleConns,
+				MaxIdleConnsPerHost:   geminiAuthMaxIdleConnsPerHost,
+				IdleConnTimeout:       90 * time.Second,
+				TLSHandshakeTimeout:   10 * time.Second,
+				ExpectContinueTimeout: 1 * time.Second,
+				ForceAttemptHTTP2:     true,
+			}
 		}
 
 		if transport != nil {

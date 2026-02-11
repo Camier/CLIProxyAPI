@@ -14,6 +14,11 @@ import (
 	"golang.org/x/net/proxy"
 )
 
+const (
+	executorMaxIdleConns        = 256
+	executorMaxIdleConnsPerHost = 128
+)
+
 // newProxyAwareHTTPClient creates an HTTP client with proper proxy configuration priority:
 // 1. Use auth.ProxyURL if configured (highest priority)
 // 2. Use cfg.ProxyURL if auth proxy is not configured
@@ -103,10 +108,24 @@ func buildProxyTransport(proxyURL string) *http.Transport {
 			DialContext: func(ctx context.Context, network, addr string) (net.Conn, error) {
 				return dialer.Dial(network, addr)
 			},
+			MaxIdleConns:          executorMaxIdleConns,
+			MaxIdleConnsPerHost:   executorMaxIdleConnsPerHost,
+			IdleConnTimeout:       90 * time.Second,
+			TLSHandshakeTimeout:   10 * time.Second,
+			ExpectContinueTimeout: 1 * time.Second,
+			ForceAttemptHTTP2:     true,
 		}
 	} else if parsedURL.Scheme == "http" || parsedURL.Scheme == "https" {
 		// Configure HTTP or HTTPS proxy
-		transport = &http.Transport{Proxy: http.ProxyURL(parsedURL)}
+		transport = &http.Transport{
+			Proxy:                 http.ProxyURL(parsedURL),
+			MaxIdleConns:          executorMaxIdleConns,
+			MaxIdleConnsPerHost:   executorMaxIdleConnsPerHost,
+			IdleConnTimeout:       90 * time.Second,
+			TLSHandshakeTimeout:   10 * time.Second,
+			ExpectContinueTimeout: 1 * time.Second,
+			ForceAttemptHTTP2:     true,
+		}
 	} else {
 		log.Errorf("unsupported proxy scheme: %s", parsedURL.Scheme)
 		return nil

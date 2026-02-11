@@ -15,6 +15,8 @@ import (
 	"github.com/router-for-me/CLIProxyAPI/v6/internal/util"
 )
 
+const maxCapturedRequestBodyBytes = 64 * 1024
+
 // RequestLoggingMiddleware creates a Gin middleware that logs HTTP requests and responses.
 // It captures detailed information about the request and response, including headers and body,
 // and uses the provided RequestLogger to record this data. When logging is disabled in the
@@ -87,15 +89,21 @@ func captureRequestInfo(c *gin.Context) (*RequestInfo, error) {
 	// Capture request body
 	var body []byte
 	if c.Request.Body != nil {
-		// Read the body
-		bodyBytes, err := io.ReadAll(c.Request.Body)
+		// Capture only a bounded prefix to avoid buffering large payloads.
+		// Restore consumed bytes + unread remainder so downstream handlers see the full body.
+		bodyBytes, err := io.ReadAll(io.LimitReader(c.Request.Body, maxCapturedRequestBodyBytes+1))
 		if err != nil {
 			return nil, err
 		}
 
-		// Restore the body for the actual request processing
-		c.Request.Body = io.NopCloser(bytes.NewBuffer(bodyBytes))
-		body = bodyBytes
+		// Restore the full body for actual request processing.
+		c.Request.Body = io.NopCloser(io.MultiReader(bytes.NewReader(bodyBytes), c.Request.Body))
+
+		if len(bodyBytes) > maxCapturedRequestBodyBytes {
+			body = bodyBytes[:maxCapturedRequestBodyBytes]
+		} else {
+			body = bodyBytes
+		}
 	}
 
 	return &RequestInfo{
